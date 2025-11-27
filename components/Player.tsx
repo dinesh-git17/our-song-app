@@ -1,9 +1,10 @@
 "use client";
 
-import { SONG_METADATA } from "@/data/lyrics";
+import { useAudio } from "@/contexts/AudioContext";
+import { Song } from "@/data/songs";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  ChevronLeft,
+  ChevronDown,
   Heart,
   Pause,
   Play,
@@ -12,96 +13,114 @@ import {
   SkipForward,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BlurredBackground } from "./BlurredBackground";
 import { LyricsView } from "./LyricsView";
 
-export function Player() {
+interface PlayerProps {
+  song: Song;
+}
+
+export function Player({ song }: PlayerProps) {
   const router = useRouter();
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(SONG_METADATA.duration);
+  const progressRef = useRef<HTMLDivElement>(null);
+  const { currentSong, isPlaying, currentTime, duration, playSong, togglePlayPause, seek } = useAudio();
   const [isRepeat, setIsRepeat] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isHoveringProgress, setIsHoveringProgress] = useState(false);
+  const [localTime, setLocalTime] = useState(currentTime);
+
+  // Auto-play this song when component mounts if not already the current song
+  useEffect(() => {
+    if (!currentSong || currentSong.id !== song.id) {
+      playSong(song);
+    }
+    // Only run on mount, not when dependencies change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [song.id]);
+
+  // Sync local time with context time (unless dragging)
+  useEffect(() => {
+    if (!isDragging) {
+      setLocalTime(currentTime);
+    }
+  }, [currentTime, isDragging]);
+
+  const actualDuration = duration > 0 ? duration : song.duration;
+  const displayTime = isDragging ? localTime : currentTime;
+
+  const skipBackward = useCallback(() => {
+    seek(Math.max(0, currentTime - 10));
+  }, [seek, currentTime]);
+
+  const skipForward = useCallback(() => {
+    seek(Math.min(actualDuration, currentTime + 10));
+  }, [seek, currentTime, actualDuration]);
+
+  const toggleRepeat = useCallback(() => {
+    setIsRepeat((prev) => !prev);
+  }, []);
+
+  const toggleLike = useCallback(() => {
+    setIsLiked((prev) => !prev);
+  }, []);
+
+  const handleBack = useCallback(() => {
+    router.push("/playlist");
+  }, [router]);
+
+  const handleProgressClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const progressBar = progressRef.current;
+    if (!progressBar) return;
+
+    const rect = progressBar.getBoundingClientRect();
+    const clickPosition = (e.clientX - rect.left) / rect.width;
+    const newTime = clickPosition * actualDuration;
+    seek(newTime);
+    setLocalTime(newTime);
+  }, [actualDuration, seek]);
+
+  const handleProgressDrag = useCallback((e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+    if (!isDragging) return;
+
+    const progressBar = progressRef.current;
+    if (!progressBar) return;
+
+    const rect = progressBar.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+    const dragPosition = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const newTime = dragPosition * actualDuration;
+    setLocalTime(newTime);
+  }, [isDragging, actualDuration]);
+
+  const handleDragEnd = useCallback(() => {
+    if (isDragging) {
+      seek(localTime);
+      setIsDragging(false);
+    }
+  }, [isDragging, localTime, seek]);
 
   useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
+    if (isDragging) {
+      const handleMouseUp = () => handleDragEnd();
+      const handleMouseMove = (e: MouseEvent) => {
+        const progressBar = progressRef.current;
+        if (!progressBar) return;
+        const rect = progressBar.getBoundingClientRect();
+        const dragPosition = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        setLocalTime(dragPosition * actualDuration);
+      };
 
-    const handleTimeUpdate = () => {
-      setCurrentTime(audio.currentTime);
-    };
+      window.addEventListener('mouseup', handleMouseUp);
+      window.addEventListener('mousemove', handleMouseMove);
 
-    const handleLoadedMetadata = () => {
-      setDuration(audio.duration);
-    };
-
-    const handleEnded = () => {
-      if (isRepeat) {
-        audio.currentTime = 0;
-        audio.play();
-      } else {
-        setIsPlaying(false);
-        setCurrentTime(0);
-      }
-    };
-
-    audio.addEventListener("timeupdate", handleTimeUpdate);
-    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
-    audio.addEventListener("ended", handleEnded);
-
-    return () => {
-      audio.removeEventListener("timeupdate", handleTimeUpdate);
-      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      audio.removeEventListener("ended", handleEnded);
-    };
-  }, [isRepeat]);
-
-  const togglePlayPause = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    if (isPlaying) {
-      audio.pause();
-    } else {
-      audio.play();
+      return () => {
+        window.removeEventListener('mouseup', handleMouseUp);
+        window.removeEventListener('mousemove', handleMouseMove);
+      };
     }
-    setIsPlaying(!isPlaying);
-  };
-
-  const skipBackward = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = Math.max(0, audio.currentTime - 5);
-  };
-
-  const skipForward = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = Math.min(duration, audio.currentTime + 5);
-  };
-
-  const toggleRepeat = () => {
-    setIsRepeat(!isRepeat);
-  };
-
-  const toggleLike = () => {
-    setIsLiked(!isLiked);
-  };
-
-  const handleBack = () => {
-    router.push("/");
-  };
-
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    const newTime = parseFloat(e.target.value);
-    audio.currentTime = newTime;
-    setCurrentTime(newTime);
-  };
+  }, [isDragging, actualDuration, handleDragEnd]);
 
   const formatTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
@@ -109,176 +128,255 @@ export function Player() {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const progressPercentage = (currentTime / duration) * 100;
+  const progressPercentage = actualDuration > 0 ? (displayTime / actualDuration) * 100 : 0;
 
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden">
-      <BlurredBackground imageSrc="/cover.png" />
-
-      <audio ref={audioRef} src="/song.mp3" preload="metadata" />
+      <BlurredBackground imageSrc={song.coverSrc} isPlaying={isPlaying} />
 
       <div className="relative z-10 flex flex-col h-full overflow-hidden">
-        <div className="flex-shrink-0 pt-4 px-4">
+        {/* Header */}
+        <motion.header
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="flex-shrink-0 safe-top px-3 pt-1 flex items-center justify-between"
+        >
           <motion.button
             onClick={handleBack}
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.9 }}
-            className="w-10 h-10 flex items-center justify-center bg-white/10 backdrop-blur-md rounded-full text-white hover:bg-white/20 transition-colors"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className="w-8 h-8 flex items-center justify-center glass-light rounded-full text-white/80 hover:text-white hover:bg-white/15 transition-all duration-300"
+            aria-label="Go back to playlist"
           >
-            <ChevronLeft className="w-6 h-6" />
+            <ChevronDown className="w-5 h-5" />
           </motion.button>
-        </div>
 
-        <div className="flex-shrink-0 pt-2 pb-4 px-6 text-center">
+          <p className="text-[10px] font-medium text-white/40 uppercase tracking-widest">
+            Now Playing
+          </p>
+
+          <div className="w-8" /> {/* Spacer */}
+        </motion.header>
+
+        {/* Album Art & Info */}
+        <div className="flex-shrink-0 pt-1 pb-2 px-6 text-center">
           <motion.div
             initial={{ scale: 0.8, opacity: 0 }}
-            animate={{
-              scale: isPlaying ? [1, 1.03, 1] : 1,
-              opacity: 1,
-            }}
-            transition={{
-              scale: {
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", stiffness: 200, damping: 20 }}
+            className="relative w-32 h-32 sm:w-40 sm:h-40 md:w-48 md:h-48 mx-auto mb-2"
+          >
+            {/* Glow effect */}
+            <motion.div
+              className="absolute inset-0 rounded-3xl"
+              animate={isPlaying ? {
+                opacity: [0.4, 0.6, 0.4],
+                scale: [1.1, 1.15, 1.1],
+              } : {
+                opacity: 0.3,
+                scale: 1.1,
+              }}
+              transition={{
                 duration: 3,
                 repeat: Infinity,
                 ease: "easeInOut",
-              },
-              opacity: {
-                duration: 0.5,
-              },
-            }}
-            className="relative w-40 h-40 md:w-48 md:h-48 mx-auto mb-4"
-          >
-            <div className="w-full h-full rounded-2xl overflow-hidden shadow-2xl bg-gradient-to-br from-pink-500 via-purple-500 to-indigo-600">
+              }}
+              style={{
+                background: "linear-gradient(135deg, hsl(330 81% 60% / 0.5) 0%, hsl(270 91% 65% / 0.5) 100%)",
+                filter: "blur(50px)",
+              }}
+            />
+
+            {/* Album cover */}
+            <motion.div
+              animate={isPlaying ? {
+                scale: [1, 1.02, 1],
+              } : {
+                scale: 1,
+              }}
+              transition={{
+                duration: 4,
+                repeat: Infinity,
+                ease: "easeInOut",
+              }}
+              className="relative w-full h-full rounded-3xl overflow-hidden shadow-2xl"
+              style={{
+                boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.5)",
+              }}
+            >
               <img
-                src="/cover.png"
-                alt="Album Cover"
+                src={song.coverSrc}
+                alt={`${song.title} album cover`}
                 className="w-full h-full object-cover"
               />
-            </div>
+              {/* Subtle overlay */}
+              <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent" />
+            </motion.div>
           </motion.div>
 
-          <motion.h1
-            initial={{ opacity: 0, y: 10 }}
+          {/* Song info */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2, duration: 0.6 }}
-            className="text-2xl md:text-3xl font-bold mb-1"
-            style={{
-              background:
-                "linear-gradient(135deg, #fbb6ce 0%, #d8b4fe 50%, #c7d2fe 100%)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              backgroundClip: "text",
-              letterSpacing: "-0.02em",
-            }}
+            transition={{ delay: 0.2 }}
           >
-            {SONG_METADATA.title}
-          </motion.h1>
-          <motion.p
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3, duration: 0.6 }}
-            className="text-base md:text-lg text-gray-300 font-medium tracking-wide"
-          >
-            {SONG_METADATA.artist}
-          </motion.p>
+            <h1 className="text-lg sm:text-xl font-bold tracking-tight gradient-text-primary">
+              {song.title}
+            </h1>
+            <p className="text-xs sm:text-sm text-neutral-400 font-medium">
+              {song.artist}
+            </p>
+          </motion.div>
         </div>
 
-        <LyricsView currentTime={currentTime} />
+        {/* Lyrics */}
+        <LyricsView currentTime={displayTime} lyrics={song.lyrics} />
 
-        <div className="flex-shrink-0 safe-bottom">
+        {/* Controls */}
+        <div className="flex-shrink-0">
           <motion.div
             initial={{ y: 100, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.4, duration: 0.6 }}
-            className="px-6 pb-4 space-y-3 bg-gradient-to-t from-black/60 via-black/40 to-transparent backdrop-blur-xl"
+            transition={{ delay: 0.3, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+            className="px-4 sm:px-6 pb-safe pt-2 glass border-t border-white/5"
+            style={{ paddingBottom: "max(0.5rem, env(safe-area-inset-bottom))" }}
           >
-            <div className="space-y-2 pt-4">
-              <input
-                type="range"
-                min="0"
-                max={duration}
-                value={currentTime}
-                onChange={handleSeek}
-                className="w-full h-1 bg-white/20 rounded-lg appearance-none cursor-pointer accent-pink-500"
-                style={{
-                  background: `linear-gradient(to right, #ec4899 0%, #ec4899 ${progressPercentage}%, rgba(255,255,255,0.2) ${progressPercentage}%, rgba(255,255,255,0.2) 100%)`,
-                }}
-              />
+            {/* Progress bar */}
+            <div className="mb-1">
+              <div
+                ref={progressRef}
+                className="relative h-5 flex items-center cursor-pointer group"
+                onClick={handleProgressClick}
+                onMouseDown={() => setIsDragging(true)}
+                onMouseEnter={() => setIsHoveringProgress(true)}
+                onMouseLeave={() => setIsHoveringProgress(false)}
+                onMouseMove={handleProgressDrag}
+                role="slider"
+                aria-label="Song progress"
+                aria-valuemin={0}
+                aria-valuemax={actualDuration}
+                aria-valuenow={displayTime}
+                tabIndex={0}
+              >
+                {/* Track background */}
+                <div className="absolute left-0 right-0 h-[3px] bg-white/20 rounded-full overflow-hidden">
+                  {/* Progress fill */}
+                  <motion.div
+                    className="h-full rounded-full"
+                    style={{
+                      width: `${progressPercentage}%`,
+                      background: "linear-gradient(90deg, hsl(330 81% 60%) 0%, hsl(330 81% 55%) 100%)",
+                    }}
+                  />
+                </div>
 
-              <div className="flex justify-between text-xs text-gray-300 font-semibold tracking-wider">
-                <span>{formatTime(currentTime)}</span>
-                <span>{formatTime(duration)}</span>
+                {/* Thumb */}
+                <motion.div
+                  className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white shadow-lg"
+                  style={{
+                    left: `calc(${progressPercentage}% - 6px)`,
+                  }}
+                  animate={{
+                    scale: isHoveringProgress || isDragging ? 1 : 0,
+                    opacity: isHoveringProgress || isDragging ? 1 : 0,
+                  }}
+                  transition={{ duration: 0.15 }}
+                />
+              </div>
+
+              {/* Time display */}
+              <div className="flex justify-between text-[10px] text-neutral-500 font-medium tabular-nums">
+                <span>{formatTime(displayTime)}</span>
+                <span>{formatTime(actualDuration)}</span>
               </div>
             </div>
 
-            <div className="flex items-center justify-center gap-6 pb-2">
+            {/* Playback controls */}
+            <div className="flex items-center justify-center gap-2 sm:gap-3">
+              {/* Like button */}
               <motion.button
                 onClick={toggleLike}
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.9 }}
-                className={`w-10 h-10 flex items-center justify-center rounded-full backdrop-blur-md transition-all ${
+                className={`w-8 h-8 flex items-center justify-center rounded-full transition-all duration-300 ${
                   isLiked
-                    ? "bg-pink-500 text-white shadow-lg shadow-pink-500/50"
-                    : "bg-white/10 text-gray-300 hover:bg-white/20"
+                    ? "text-pink-400"
+                    : "text-neutral-400 hover:text-white"
                 }`}
+                aria-label={isLiked ? "Unlike song" : "Like song"}
+                aria-pressed={isLiked}
               >
                 <Heart
-                  className={`w-5 h-5 transition-all ${isLiked ? "fill-white" : ""}`}
+                  className={`w-4 h-4 transition-all duration-300 ${isLiked ? "fill-pink-400" : ""}`}
                 />
               </motion.button>
 
+              {/* Skip back */}
               <motion.button
                 onClick={skipBackward}
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.9 }}
-                className="w-10 h-10 flex items-center justify-center bg-white/10 backdrop-blur-md rounded-full text-white hover:bg-white/20 transition-colors"
+                className="w-8 h-8 flex items-center justify-center text-white/80 hover:text-white transition-colors"
+                aria-label="Skip back 10 seconds"
               >
-                <SkipBack className="w-5 h-5" />
+                <SkipBack className="w-5 h-5 fill-current" />
               </motion.button>
 
+              {/* Play/Pause button */}
               <motion.button
                 onClick={togglePlayPause}
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
-                className="w-14 h-14 flex items-center justify-center bg-white rounded-full shadow-2xl shadow-white/30"
+                className="w-12 h-12 flex items-center justify-center rounded-full transition-all duration-300"
+                style={{
+                  background: "linear-gradient(135deg, hsl(330 81% 60%) 0%, hsl(330 81% 50%) 100%)",
+                  boxShadow: "0 6px 24px -4px rgba(236, 72, 153, 0.5)",
+                }}
+                aria-label={isPlaying ? "Pause" : "Play"}
               >
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={isPlaying ? "playing" : "paused"}
-                    initial={{ scale: 0.8, opacity: 0 }}
+                    initial={{ scale: 0.5, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
-                    exit={{ scale: 0.8, opacity: 0 }}
+                    exit={{ scale: 0.5, opacity: 0 }}
                     transition={{ duration: 0.15 }}
                   >
                     {isPlaying ? (
-                      <Pause className="w-7 h-7 text-gray-900 fill-gray-900" />
+                      <Pause className="w-5 h-5 text-white fill-white" />
                     ) : (
-                      <Play className="w-7 h-7 text-gray-900 fill-gray-900 ml-1" />
+                      <Play className="w-5 h-5 text-white fill-white ml-0.5" />
                     )}
                   </motion.div>
                 </AnimatePresence>
               </motion.button>
 
+              {/* Skip forward */}
               <motion.button
                 onClick={skipForward}
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.9 }}
-                className="w-10 h-10 flex items-center justify-center bg-white/10 backdrop-blur-md rounded-full text-white hover:bg-white/20 transition-colors"
+                className="w-8 h-8 flex items-center justify-center text-white/80 hover:text-white transition-colors"
+                aria-label="Skip forward 10 seconds"
               >
-                <SkipForward className="w-5 h-5" />
+                <SkipForward className="w-5 h-5 fill-current" />
               </motion.button>
 
+              {/* Repeat button */}
               <motion.button
                 onClick={toggleRepeat}
                 whileHover={{ scale: 1.1 }}
                 whileTap={{ scale: 0.9 }}
-                className={`w-10 h-10 flex items-center justify-center rounded-full backdrop-blur-md transition-all ${
+                className={`w-8 h-8 flex items-center justify-center rounded-full transition-all duration-300 ${
                   isRepeat
-                    ? "bg-pink-500 text-white shadow-lg shadow-pink-500/50"
-                    : "bg-white/10 text-gray-300 hover:bg-white/20"
+                    ? "text-pink-400"
+                    : "text-neutral-400 hover:text-white"
                 }`}
+                aria-label={isRepeat ? "Disable repeat" : "Enable repeat"}
+                aria-pressed={isRepeat}
               >
-                <Repeat className="w-5 h-5" />
+                <Repeat className="w-4 h-4" />
               </motion.button>
             </div>
           </motion.div>
