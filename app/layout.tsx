@@ -1,9 +1,18 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Playfair_Display } from "next/font/google";
 import "./globals.css";
 import { AudioProvider } from "@/contexts/AudioContext";
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+});
+
+const playfair = Playfair_Display({
+  subsets: ["latin"],
+  variable: "--font-playfair",
+  weight: ["400", "500", "600", "700"],
+});
 
 export const metadata: Metadata = {
   title: "Carolina, My Everything | A Song For You",
@@ -19,7 +28,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="bg-[hsl(240_10%_4%)]">
-      <body className={`${inter.className} bg-[hsl(240_10%_4%)] min-h-screen`}>
+      <body className={`${inter.variable} ${playfair.variable} font-sans bg-[hsl(240_10%_4%)] min-h-screen`}>
         <AudioProvider>{children}</AudioProvider>
       </body>
     </html>
